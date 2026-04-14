@@ -132,59 +132,98 @@ def draw_top_clients_chart(ax: plt.Axes, df: pd.DataFrame, title: str, label_siz
     base_blue = "#0B1F3A"
     bright_gold = "#D4A72C"
     soft_gray = "#94A3B8"
+    blue_potential = "#3B82F6"
 
-    score_mean = float(df["probabilidad_compra_lujo"].mean())
-    top_10 = df.nlargest(10, "probabilidad_compra_lujo").copy()
-    top_10["multiplo_media"] = top_10["probabilidad_compra_lujo"] / score_mean
-    top_10 = top_10.sort_values("multiplo_media", ascending=True).reset_index(drop=True)
+    data = df.copy()
+    probability_threshold = 0.60
+    spend_threshold = float(data["gasto_total_neto"].quantile(0.60))
 
-    colors = [bright_gold if int(client_id) == 1727 else base_blue for client_id in top_10["id_cliente"]]
-    if bright_gold not in colors:
-        colors[-1] = bright_gold
-
-    ax.barh(top_10["id_cliente"].astype(str), top_10["multiplo_media"], color=colors, edgecolor="white")
-
-    x_pad = top_10["multiplo_media"].max() * 0.02
-    for index, row in top_10.iterrows():
-        ax.text(
-            row["multiplo_media"] + x_pad,
-            index,
-            f"{row['probabilidad_compra_lujo']:.1%}",
-            va="center",
-            ha="left",
-            fontsize=label_size,
-        )
-
-    min_size, max_size = 80, 280
-    spend_scaled = np.interp(
-        top_10["gasto_total_neto"],
-        (top_10["gasto_total_neto"].min(), top_10["gasto_total_neto"].max()),
-        (min_size, max_size),
+    data["etiqueta_color"] = data.apply(
+        lambda row: bright_gold if row["probabilidad_compra_lujo"] > probability_threshold and row["gasto_total_neto"] >= spend_threshold else (
+            blue_potential if row["probabilidad_compra_lujo"] > probability_threshold else soft_gray
+        ),
+        axis=1,
     )
-    icon_x = np.repeat(max(top_10["multiplo_media"].min() * 0.08, 0.05), len(top_10))
-    for idx, size in enumerate(spend_scaled):
-        icon_color = bright_gold if int(top_10.loc[idx, "id_cliente"]) == 1727 else soft_gray
-        ax.scatter(
-            icon_x[idx],
-            idx,
-            s=float(size),
-            marker="$\\$$",
-            color=icon_color,
-            edgecolors="white",
-            linewidths=0.9,
-            zorder=3,
+
+    def point_color(row: pd.Series) -> str:
+        if row["probabilidad_compra_lujo"] > probability_threshold and row["gasto_total_neto"] >= spend_threshold:
+            return bright_gold
+        if row["probabilidad_compra_lujo"] > probability_threshold and row["gasto_total_neto"] < spend_threshold:
+            return blue_potential
+        return soft_gray
+
+    bubble_colors = data.apply(point_color, axis=1)
+    spend_min = float(data["gasto_total_neto"].min())
+    spend_max = float(data["gasto_total_neto"].max())
+    size_min, size_max = 120, 1200
+    bubble_sizes = np.interp(data["gasto_total_neto"], (spend_min, spend_max), (size_min, size_max))
+
+    ax.scatter(
+        data["gasto_total_neto"],
+        data["probabilidad_compra_lujo"],
+        s=bubble_sizes,
+        c=bubble_colors,
+        alpha=0.88,
+        edgecolor="white",
+        linewidth=1.2,
+        zorder=3,
+    )
+
+    top_10 = data.nlargest(10, "probabilidad_compra_lujo").copy()
+    for _, row in top_10.iterrows():
+        x_offset = (spend_max - spend_min) * 0.012
+        y_offset = 0.004
+        ax.text(
+            row["gasto_total_neto"] + x_offset,
+            row["probabilidad_compra_lujo"] + y_offset,
+            f"ID {int(row['id_cliente'])}",
+            fontsize=label_size,
+            fontweight="bold",
+            color="#111827",
+            ha="left",
+            va="bottom",
+            bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="#E2E8F0", alpha=0.95),
+            zorder=4,
         )
 
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.1f}x media"))
-    ax.xaxis.set_major_locator(MultipleLocator(0.5))
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.1f}x"))
-    ax.tick_params(axis="x", labelrotation=-15)
+    ax.scatter([], [], s=260, c=bright_gold, edgecolors="white", linewidth=1.0, label="VIP: alto gasto y alta prob.")
+    ax.scatter([], [], s=260, c=blue_potential, edgecolors="white", linewidth=1.0, label="Alta prob. / gasto bajo")
+    ax.scatter([], [], s=260, c=soft_gray, edgecolors="white", linewidth=1.0, label="Resto")
+
+    ax.annotate(
+        "Clientes VIP: Máxima Prioridad",
+        xy=(0.98, 0.98),
+        xycoords="axes fraction",
+        xytext=(0.74, 0.88),
+        textcoords="axes fraction",
+        arrowprops=dict(arrowstyle="->", color=bright_gold, lw=1.8),
+        bbox=dict(boxstyle="round,pad=0.35", facecolor="white", edgecolor=bright_gold, alpha=0.98),
+        fontsize=12,
+        fontweight="bold",
+        color="#7A4E00",
+    )
+
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"${value:,.0f}"))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.0%}"))
     ax.set_title(title)
-    ax.set_xlabel("Multiplicador de probabilidad sobre la media (Multiplicador)")
-    ax.set_ylabel("ID del cliente")
-    ax.set_xlim(0, top_10["multiplo_media"].max() * 1.3)
+    ax.set_xlabel("Gasto Histórico del Black Friday")
+    ax.set_ylabel("Probabilidad de Compra de Lujo")
+    ax.set_xlim(spend_min * 0.95, spend_max * 1.05)
+    ax.set_ylim(0, 1.0)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    ax.legend(
+        title="Señal de Valor",
+        loc="lower right",
+        frameon=True,
+        facecolor="white",
+        framealpha=0.95,
+        edgecolor="#CBD5E1",
+        fontsize=11,
+        title_fontsize=12,
+        markerscale=1.3,
+        borderpad=0.8,
+    )
 
 
 def plot_top_clients(df: pd.DataFrame, output_path: Path) -> None:
@@ -192,7 +231,7 @@ def plot_top_clients(df: pd.DataFrame, output_path: Path) -> None:
     draw_top_clients_chart(
         ax,
         df,
-        "Top 10 Clientes: Valor excepcional sobre la media",
+        "Mapa de Calor: ¿A quién llamar mañana mismo?",
         label_size=11,
     )
     fig.tight_layout()
@@ -453,7 +492,7 @@ def build_executive_panel(df: pd.DataFrame, output_path: Path) -> None:
     draw_top_clients_chart(
         ax2,
         df,
-        "Top 10 Clientes: Valor excepcional sobre la media",
+        "Mapa de Calor: ¿A quién llamar mañana mismo?",
         label_size=10,
     )
 

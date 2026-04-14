@@ -21,6 +21,7 @@ Thumbs.db
 *.log
 *.tmp
 
-# Salidas opcionales pesadas (si no quieres subirlas)
-# datos/
-# modelo/
+# Variables de entorno
+.env
+.env.*
+
